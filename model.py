@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-import torch..nn.functional as F
+import torch.nn.functional as F
 import torch.optim as optim
 
 import torchvision.modesl as models
@@ -155,7 +155,7 @@ class EncoderDecoder(nn.Module):
             embed_size=embed_size, vocab_size = len(dataset.vocab),
             attention_dim=attention_dim,
             encoder_dim=encoder_dim,
-            decoder_dim==decoder_dim
+            decoder_dim=decoder_dim
         )
         
         def forward(self, images, captions):
@@ -172,13 +172,13 @@ decoder_dim=512
 learning_rate = 3e-4
         
 
-1) Initial Imports and loading the utils function. The dataset is used is Flickr 8k from kaggle.
-Custom dataset and dataloader is implemented in this notebook.
+# 1) Initial Imports and loading the utils function. The dataset is used is Flickr 8k from kaggle.
+# Custom dataset and dataloader is implemented in this notebook.
 
-#location of the training data 
-data_location =  "../input/flickr8k"
-#copy dataloader
-!cp ../input/data-loader/data_loader.py .
+# #location of the training data 
+# data_location =  "../input/flickr8k"
+# #copy dataloader
+# !cp ../input/data-loader/data_loader.py .
 
 #imports
 import numpy as np
@@ -189,7 +189,7 @@ import torchvision.transforms as T
 #custom imports 
 from data_loader import FlickrDataset,get_data_loader
 
-2) Implementing the Helper function to plot the Tensor image
+# 2) Implementing the Helper function to plot the Tensor image
 
 #show the tensor image
 import matplotlib.pyplot as plt
@@ -253,9 +253,9 @@ device
 
 device(type='cuda', index=0)
 
-3) Defining the Model Architecture
+# 3) Defining the Model Architecture
 
-Model is seq2seq model. In the encoder pretrained ResNet model is used to extract the features. Decoder, is the implementation of the Bahdanau Attention Decoder. In the decoder model LSTM cell.
+# Model is seq2seq model. In the encoder pretrained ResNet model is used to extract the features. Decoder, is the implementation of the Bahdanau Attention Decoder. In the decoder model LSTM cell.
 
 import torch
 import numpy as np
@@ -440,7 +440,7 @@ class EncoderDecoder(nn.Module):
         outputs = self.decoder(features, captions)
         return outputs
 
-4) Setting Hypperparameter and Init the model
+# 4) Setting Hypperparameter and Init the model
 
 #Hyperparams
 embed_size=300

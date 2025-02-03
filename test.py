@@ -6,7 +6,7 @@ import torchvision.transforms as T
 from data_loader import FlickrDataset, get_dataloader
 
 # Initiating the Dataset and Dataloader
-data_locatoin = "../input/flickr8k"
+data_location = "../input/flickr8k"
 BATCH_SIZE = 256
 NUM_WORKER = 4
 
@@ -21,28 +21,27 @@ transforms = T.Compose([
 # testing the dataset class
 dataset = FlickrDataset (
     root_dir = data_location+"/Images",
-    caption_file = data_location+"/captions.txt"
+    caption_file = data_location+"/captions.txt",
     transform = transforms
 )
 
 # writing the dataloader
-data_loader = get_data_loader (
-    dataset = dataset,
-    batch_size = BATCH_SIZE,
-    num_workers = NUM_WORKER,
-    shuffle = True,
-    # batch_first = False
+data_loader = get_dataloader(
+    dataset=dataset,
+    batch_size=BATCH_SIZE,
+    num_workers=NUM_WORKER,
+    shuffle=True
 )
+
 
 # vocab size
 vocab_size = len(dataset.vocab)
 
-device = torch.device("cuda:0" if torch.cuda_is_available() else "cpu")
-device
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Implementing helper function to plot the Tensor image
 
-import matplotlib.pylot as plt
+import matplotlib.pyplot as plt
 def show_image(img, title=None):
     '''Imshow for Tensor '''
     
