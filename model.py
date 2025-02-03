@@ -1,5 +1,5 @@
 #location of the training data 
-data_location =  "../input/flickr8k"
+data_location =  "../Image-Captioning-With-Attention/flickr8k"
 #copy dataloader
 # !cp ../input/data-loader/data_loader.py .
 
