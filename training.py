@@ -2,14 +2,15 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import torchvision.transforms as T
+import torchvision.models as models
 from torch.utils.data import Dataset, DataLoader
 from collections import Counter
 import nltk
 from nltk.tokenize import word_tokenize
 from PIL import Image
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # Initialize NLTK
 nltk.download('punkt')
@@ -59,56 +60,77 @@ class FlickrDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        caption = self.captions[idx]
-        img_name = self.imgs[idx]
-        img_location = os.path.join(self.root_dir, img_name)
-        img = Image.open(img_location).convert("RGB")
+        img_path = os.path.join(self.root_dir, self.df.iloc[idx, 0])  # Assuming the first column contains image paths
+        image = Image.open(img_path).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+        
+        caption = self.df.iloc[idx, 1]  # assuming caption is in the second column
+        caption_tokens = nltk.word_tokenize(caption.lower())  # Tokenize caption
+        caption_tokens = ['<SOS>'] + caption_tokens + ['<EOS>']  # Add special tokens
 
-        if self.transform is not None:
-            img = self.transform(img)
+        caption_indices = [self.vocab.stoi.get(word, self.vocab.stoi["<UNK>"]) for word in caption_tokens]
 
-        caption_vec = [self.vocab.stoi["<SOS>"]]
-        caption_vec += self.vocab.numericalize(caption)
-        caption_vec += [self.vocab.stoi["<EOS>"]]
+        return image, torch.tensor(caption_indices)
 
-        return img, torch.tensor(caption_vec)
+    def collate_fn(self, batch):
+        images, captions = zip(*batch)
 
-# Define transformations
-transforms = T.Compose([T.Resize((224, 224)), T.ToTensor()])
+        # Stack images (ensure consistent shape)
+        images = torch.stack(images, 0)
 
-# Initialize dataset and vocab
-dataset = FlickrDataset(root_dir="./Images", captions_file="./captions.txt", transform=transforms)
+        # Determine the max length in the batch of captions
+        max_caption_len = max([len(caption) for caption in captions])
 
-# Now you can access dataset.vocab to get vocab for the model
-vocab = dataset.vocab
-vocab_size = len(vocab)
+        # Pad the captions
+        padded_captions = torch.full((len(captions), max_caption_len), self.vocab.stoi["<PAD>"], dtype=torch.long)
 
-# Model class
+        for i, caption in enumerate(captions):
+            padded_captions[i, :len(caption)] = caption  # Fill up to the caption's actual length
+
+        return images, padded_captions
+
+# Model class with ResNet for feature extraction
 class ImageCaptioningModel(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size):
         super(ImageCaptioningModel, self).__init__()
-        self.embed_size = embed_size
-        self.hidden_size = hidden_size
-
-        # Image feature extractor (e.g., ResNet-152 or your own CNN)
-        self.encoder = nn.Conv2d(3, self.embed_size, kernel_size=3, stride=2, padding=1)
-
+        
+        # Use a pre-trained ResNet for feature extraction
+        resnet = models.resnet18(pretrained=True)  # or resnet18, resnet50, etc.
+        self.resnet = nn.Sequential(*list(resnet.children())[:-1])  # Remove the classification head
+        
         # Decoder (LSTM)
-        self.decoder = nn.LSTM(self.embed_size, self.hidden_size, batch_first=True)
+        self.decoder = nn.LSTM(embed_size, hidden_size, batch_first=True)
 
         # Linear layer to predict words
-        self.fc = nn.Linear(self.hidden_size, vocab_size)
+        self.fc = nn.Linear(hidden_size, vocab_size)
 
     def forward(self, images, captions):
-        features = self.encoder(images)
-        features = features.view(features.size(0), -1)  # Flatten
+        # Extract features using ResNet
+        features = self.resnet(images)  
+        features = features.view(features.size(0), -1)  # Flatten to match LSTM input
 
+        # Pass through LSTM decoder
         hiddens, _ = self.decoder(captions)
+        
+        # Output the predictions
         output = self.fc(hiddens)
 
         return output
 
-# Initialize model
+# Define transformations
+transform = T.Compose([
+    T.Resize((256, 256)),  # Resize all images to 256x256
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalization based on ImageNet
+])
+
+# Initialize dataset and vocab
+dataset = FlickrDataset(root_dir="../Image-Captioning-With-Attention/flickr8k/Images", captions_file="../Image-Captioning-With-Attention/flickr8k/captions.txt", transform=transform)
+data_loader = DataLoader(dataset, batch_size=64, shuffle=True, collate_fn=dataset.collate_fn)
+
+# Initialize the model
+vocab_size = len(dataset.vocab)
 model = ImageCaptioningModel(embed_size=256, hidden_size=512, vocab_size=vocab_size)
 
 # Set device
@@ -119,7 +141,7 @@ model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Train function
+# Training function
 def train_model(data_loader, num_epochs=10):
     model.train()
     train_losses = []
@@ -133,7 +155,7 @@ def train_model(data_loader, num_epochs=10):
             optimizer.zero_grad()
 
             # Forward pass through the model
-            output, _ = model(imgs, captions[:, :-1])  # exclude <EOS> token from input
+            output = model(imgs, captions[:, :-1])  # exclude <EOS> token from input
 
             # Calculate loss (Cross-Entropy)
             loss = criterion(output.view(-1, vocab_size), captions[:, 1:].contiguous().view(-1))  # ignore <SOS> token
@@ -158,9 +180,28 @@ def plot_loss(train_losses):
     plt.title('Training Loss Over Epochs')
     plt.show()
 
-# Create data loader
-data_loader = DataLoader(dataset=dataset, batch_size=64, shuffle=True)
-
 # Train model for 10 epochs
 train_losses = train_model(data_loader, num_epochs=10)
 plot_loss(train_losses)
+
+# Evaluation function
+def evaluate_model(data_loader):
+    model.eval()
+    with torch.no_grad():
+        for imgs, captions in data_loader:
+            imgs, captions = imgs.to(device), captions.to(device)
+            output = model(imgs, captions[:, :-1])  # Get model predictions
+            
+            # Get predicted words (use the word with the highest probability)
+            predicted_ids = torch.argmax(output, dim=2)
+
+            # Convert predicted IDs back to words
+            predicted_words = [[dataset.vocab.itos[idx] for idx in caption] for caption in predicted_ids.cpu().numpy()]
+
+            print(predicted_words)  # For now, print predictions
+
+# Create a small data loader for evaluation
+eval_data_loader = DataLoader(dataset, batch_size=2, shuffle=False, collate_fn=dataset.collate_fn)
+
+# Evaluate model
+evaluate_model(eval_data_loader)
