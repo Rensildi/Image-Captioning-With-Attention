@@ -1,19 +1,21 @@
-# training.py
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Ensure `vocab` is defined
+vocab_size = len(vocab)  # This should be your vocab size, e.g., len(dataset.vocab)
+
 # Initialize the model
-model = ImageCaptioningModel(embed_size=256, hidden_size=512, vocab_size=len(vocab))
+model = ImageCaptioningModel(embed_size=256, hidden_size=512, vocab_size=vocab_size)
 
 # Choose the device (GPU or CPU)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 # Loss Function (Cross-Entropy Loss)
-criterion = nn.CrossEntropyLoss()
+criterion = torch.nn.CrossEntropyLoss()
 
 # Optimizer (Adam)
 optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -35,7 +37,7 @@ def train_model(data_loader, num_epochs=10):
             output, _ = model(imgs, captions[:, :-1])  # exclude <EOS> token from input
 
             # Calculate loss (Cross-Entropy)
-            loss = criterion(output.view(-1, len(vocab)), captions[:, 1:].contiguous().view(-1))  # ignore <SOS> token
+            loss = criterion(output.view(-1, vocab_size), captions[:, 1:].contiguous().view(-1))  # ignore <SOS> token
             loss.backward()
 
             # Update model weights
