@@ -4,7 +4,17 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 # Ensure `vocab` is defined
+dataset = FlickrDataset(
+    root_dir = data_location + "/Images",
+    captions_file = data_location + "/captions.txt",
+    transform = transforms
+)
+
+vocab = dataset.vocab
+
+
 vocab_size = len(vocab)  # This should be your vocab size, e.g., len(dataset.vocab)
 
 # Initialize the model
