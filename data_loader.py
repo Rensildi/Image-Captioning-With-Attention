@@ -1,402 +1,99 @@
-# Import necessary libraries
+# data_loader.py
 import os
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-
-from collections import Counter
-import nltk
-from nltk.tokenize import word_tokenize
-nltk.download('punkt')  # Ensure tokenization data is available
-
+import torch
+import numpy as np  # Added missing import
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset
-import torchvision.transforms as T
-
+from torch.utils.data import Dataset
+from torchvision import transforms
+from nltk.tokenize import word_tokenize
+from collections import Counter
 from PIL import Image
 
-# Define dataset location
-data_location = "../Image-Captioning-With-Attention/flickr8k"
-
-# Read captions file
-caption_file = data_location + '/captions.txt'
-df = pd.read_csv(caption_file)
-print("There are {} image to captions".format(len(df)))
-df.head(7)
-
-# Display a sample image
-data_idx = 11  # Choose an index (1,6,11,...)
-image_path = data_location + "/Images/" + df.iloc[data_idx, 0]
-img = mpimg.imread(image_path)
-plt.imshow(img)
-plt.show()
-
-# Show all captions for the image
-for i in range(data_idx, data_idx + 5):
-    print("Caption:", df.iloc[i, 1])
-
-# Vocabulary class using NLTK
-class Vocabulary:
-    def __init__(self, freq_threshold):
-        self.itos = {0: "<PAD>", 1: "<SOS>", 2: "<EOS>", 3: "<UNK>"}
-        self.stoi = {v: k for k, v in self.itos.items()}
-        self.freq_threshold = freq_threshold
-
-    def __len__(self):
-        return len(self.itos)
-
-    @staticmethod
-    def tokenize(text):
-        return word_tokenize(text.lower())  # Tokenization using NLTK
-
-    def build_vocab(self, sentence_list):
-        frequencies = Counter()
-        idx = 4  # Start indexing from 4 after reserved tokens
-
-        for sentence in sentence_list:
-            for word in self.tokenize(sentence):
-                frequencies[word] += 1
-                if frequencies[word] == self.freq_threshold:
-                    self.stoi[word] = idx
-                    self.itos[idx] = word
-                    idx += 1
-
-    def numericalize(self, text):
-        tokenized_text = self.tokenize(text)
-        return [self.stoi.get(token, self.stoi["<UNK>"]) for token in tokenized_text]
-
-# Test Vocabulary class
-v = Vocabulary(freq_threshold=1)
-v.build_vocab(["This is a good place to find a city"])
-print(v.stoi)
-print(v.numericalize("This is a good place to find a city here!!"))
-
-# Flickr Dataset Class
-class FlickrDataset(Dataset):
-    def __init__(self, root_dir, captions_file, transform=None, freq_threshold=5):
-        self.root_dir = root_dir
-        self.df = pd.read_csv(captions_file)
+class Flickr8KDataset(Dataset):
+    def __init__(self, image_dir, caption_file, transform=None, max_caption_length = 30):
+        self.image_dir = image_dir
+        self.captions = self.load_captions(caption_file)
+        self.img_ids = list(self.captions.keys())
         self.transform = transform
+        self.vocab = self.build_vocab()
+        self.max_caption_length = max_caption_length #Max length for captions
 
-        # Get image and caption columns
-        self.imgs = self.df["image"]
-        self.captions = self.df["caption"]
+    def load_captions(self, caption_file):
+        with open(caption_file, 'r') as f:
+            captions = f.readlines()
 
-        # Initialize vocabulary and build it
-        self.vocab = Vocabulary(freq_threshold)
-        self.vocab.build_vocab(self.captions.tolist())
+        img_to_captions = {}
+        malformed_line_count = 0  # Initialize counter for malformed lines
+
+        for caption in captions:
+            parts = caption.strip().split(',')
+            if len(parts) != 2:  # Skip malformed lines
+                print(f"Skipping malformed line: {caption.strip()}")
+                malformed_line_count += 1  # Increment the counter
+                continue
+
+            img_id, caption_text = parts
+            img_id = img_id.split('.')[0]  # Remove the file extension if present
+
+            if img_id not in img_to_captions:
+                img_to_captions[img_id] = []
+            img_to_captions[img_id].append(caption_text.strip())
+
+        print(f"Total malformed lines skipped: {malformed_line_count}")  # Print the total count
+
+        if len(img_to_captions) == 0:
+            raise ValueError("No valid captions found. Please check the dataset file.")
+
+        return img_to_captions
+
+    def build_vocab(self):
+        words = []
+        for img_id in self.img_ids:
+            for caption in self.captions[img_id]:
+                words.extend(word_tokenize(caption.lower()))
+        word_counts = Counter(words)
+        vocab = {word: idx+4 for idx, (word, _) in enumerate(word_counts.most_common())}  # Starting at index 4
+        vocab['<UNK>'] = 0  # Special token for unknown words
+        vocab['<START>'] = 1  # Special token for start of sentence
+        vocab['<END>'] = 2  # Special token for end of sentence
+        vocab['<PAD>'] = 3  # Special token for padding
+
+        # Debugging: Print some tokens and vocab size
+        print(f"Vocab size: {len(vocab)}")
+        print(f"Sample vocab entries: {list(vocab.items())[:10]}")  # Print the first 10 words in vocab
+
+        return vocab
+
 
     def __len__(self):
-        return len(self.df)
+        return len(self.img_ids)
 
     def __getitem__(self, idx):
-        caption = self.captions[idx]
-        img_name = self.imgs[idx]
-        img_location = os.path.join(self.root_dir, img_name)
-        img = Image.open(img_location).convert("RGB")
+        img_id = self.img_ids[idx]
+        captions = self.captions[img_id]
+        caption = captions[np.random.randint(len(captions))]
 
-        # Apply transformation to the image
-        if self.transform is not None:
+        img_path = os.path.join(self.image_dir, img_id + '.jpg')
+        img = Image.open(img_path).convert("RGB")
+        if self.transform:
             img = self.transform(img)
 
-        # Convert caption to numericalized vector
-        caption_vec = [self.vocab.stoi["<SOS>"]]
-        caption_vec += self.vocab.numericalize(caption)
-        caption_vec += [self.vocab.stoi["<EOS>"]]
-
-        return img, torch.tensor(caption_vec)
-
-# Define image transformations
-transforms = T.Compose([
-    T.Resize((224, 224)),
-    T.ToTensor()
-])
-
-# Function to show an image
-def show_image(inp, title=None):
-    inp = inp.numpy().transpose((1, 2, 0))
-    plt.imshow(inp)
-    if title is not None:
-        plt.title(title)
-    plt.pause(0.001)
-
-# Test dataset class
-dataset = FlickrDataset(
-    root_dir=data_location + "/Images",
-    captions_file=data_location + "/captions.txt",
-    transform=transforms
-)
-
-img, caps = dataset[0]
-show_image(img, "Image")
-print("Tokenized Caption:", caps)
-print("Sentence:", [dataset.vocab.itos[token] for token in caps.tolist()])
-
-# Custom collate function for padding
-class CapsCollate:
-    def __init__(self, pad_idx, batch_first=False):
-        self.pad_idx = pad_idx
-        self.batch_first = batch_first
-
-    def __call__(self, batch):
-        imgs = [item[0].unsqueeze(0) for item in batch]
-        imgs = torch.cat(imgs, dim=0)
-
-        targets = [item[1] for item in batch]
-        targets = pad_sequence(targets, batch_first=self.batch_first, padding_value=self.pad_idx)
-        return imgs, targets
-
-# Dataloader parameters
-BATCH_SIZE = 4
-NUM_WORKER = 1
-pad_idx = dataset.vocab.stoi["<PAD>"]
-
-# Create DataLoader
-data_loader = DataLoader(
-    dataset=dataset,
-    batch_size=BATCH_SIZE,
-    num_workers=NUM_WORKER,
-    shuffle=True,
-    collate_fn=CapsCollate(pad_idx=pad_idx, batch_first=True)
-)
-
-# Fetch a batch
-dataiter = iter(data_loader)
-batch = next(dataiter)
-images, captions = batch
-
-# Display images with captions
-for i in range(BATCH_SIZE):
-    img, cap = images[i], captions[i]
-    caption_label = [dataset.vocab.itos[token] for token in cap.tolist()]
-    eos_index = caption_label.index('<EOS>')
-    caption_label = caption_label[1:eos_index]
-    caption_label = ' '.join(caption_label)
-    show_image(img, caption_label)
-    plt.show()
-
-
-#####################################################################################
-
-# #location of the data 
-# data_location =  "../Image-Captioning-With-Attention/flickr8k"
-
-
-# #reading the text data 
-# import pandas as pd
-# caption_file = data_location + '/captions.txt'
-# df = pd.read_csv(caption_file)
-# print("There are {} image to captions".format(len(df)))
-# df.head(7)
-
-
-# import matplotlib.pyplot as plt
-# import matplotlib.image as mpimg
-
-# #select any index from the whole dataset 
-# #single image has 5 captions
-# #so, select indx as: 1,6,11,16...
-# data_idx = 11
-
-# #eg path to be plot: ../input/flickr8k/Images/1000268201_693b08cb0e.jpg
-# image_path = data_location+"/Images/"+df.iloc[data_idx,0]
-# img=mpimg.imread(image_path)
-# plt.imshow(img)
-# plt.show()
-
-# #image consits of 5 captions,
-# #showing all 5 captions of the image of the given idx 
-# for i in range(data_idx,data_idx+5):
-#     print("Caption:",df.iloc[i,1])
-    
-    
-# # custom dataset
-# #imports 
-# import os
-# from collections import Counter
-# import spacy
-# import torch
-# from torch.nn.utils.rnn import pad_sequence
-# from torch.utils.data import DataLoader,Dataset
-# import torchvision.transforms as T
-
-# from PIL import Image
-
-# #using spacy for the better text tokenization 
-# spacy_eng = spacy.load("en")
-
-# #example
-# text = "This is a good place to find a city"
-# [token.text.lower() for token in spacy_eng.tokenizer(text)]
-
-# class Vocabulary:
-#     def __init__(self,freq_threshold):
-#         #setting the pre-reserved tokens int to string tokens
-#         self.itos = {0:"<PAD>",1:"<SOS>",2:"<EOS>",3:"<UNK>"}
+        caption_tokens = word_tokenize(caption.lower())
+        caption_tokens = ['<START>'] + caption_tokens + ['<END>']
         
-#         #string to int tokens
-#         #its reverse dict self.itos
-#         self.stoi = {v:k for k,v in self.itos.items()}
+        # Truncate caption to max length if needed
+        caption_tokens = caption_tokens[:self.max_caption_length]
         
-#         self.freq_threshold = freq_threshold
+        # Pad the caption with <PAD> tokens if it's shorter than max length
+        padding_needed = self.max_caption_length - len(caption_tokens)
+        caption_tokens += ['<PAD>'] * padding_needed
         
-#     def __len__(self): return len(self.itos)
-    
-#     @staticmethod
-#     def tokenize(text):
-#         return [token.text.lower() for token in spacy_eng.tokenizer(text)]
-    
-#     def build_vocab(self, sentence_list):
-#         frequencies = Counter()
-#         idx = 4
+        caption_indices = [self.vocab.get(word, self.vocab['<UNK>']) for word in caption_tokens]
+
+        # Ensure no indices exceed vocab size
+        assert all(0 <= idx < len(self.vocab) for idx in caption_indices), \
+            f"Caption contains an index out of range! Indices: {caption_indices}, Vocab size: {len(self.vocab)}"
         
-#         for sentence in sentence_list:
-#             for word in self.tokenize(sentence):
-#                 frequencies[word] += 1
-                
-#                 #add the word to the vocab if it reaches minum frequecy threshold
-#                 if frequencies[word] == self.freq_threshold:
-#                     self.stoi[word] = idx
-#                     self.itos[idx] = word
-#                     idx += 1
-    
-#     def numericalize(self,text):
-#         """ For each word in the text corresponding index token for that word form the vocab built as list """
-#         tokenized_text = self.tokenize(text)
-#         return [ self.stoi[token] if token in self.stoi else self.stoi["<UNK>"] for token in tokenized_text ]    
-    
-    
-#     #testing the vicab class 
-# v = Vocabulary(freq_threshold=1)
+        return img, torch.tensor(caption_indices), len(caption_indices)
 
-# v.build_vocab(["This is a good place to find a city"])
-# print(v.stoi)
-# print(v.numericalize("This is a good place to find a city here!!"))
-
-
-# class FlickrDataset(Dataset):
-#     """
-#     FlickrDataset
-#     """
-#     def __init__(self,root_dir,captions_file,transform=None,freq_threshold=5):
-#         self.root_dir = root_dir
-#         self.df = pd.read_csv(caption_file)
-#         self.transform = transform
-        
-#         #Get image and caption colum from the dataframe
-#         self.imgs = self.df["image"]
-#         self.captions = self.df["caption"]
-        
-#         #Initialize vocabulary and build vocab
-#         self.vocab = Vocabulary(freq_threshold)
-#         self.vocab.build_vocab(self.captions.tolist())
-        
-    
-#     def __len__(self):
-#         return len(self.df)
-    
-#     def __getitem__(self,idx):
-#         caption = self.captions[idx]
-#         img_name = self.imgs[idx]
-#         img_location = os.path.join(self.root_dir,img_name)
-#         img = Image.open(img_location).convert("RGB")
-        
-#         #apply the transfromation to the image
-#         if self.transform is not None:
-#             img = self.transform(img)
-        
-#         #numericalize the caption text
-#         caption_vec = []
-#         caption_vec += [self.vocab.stoi["<SOS>"]]
-#         caption_vec += self.vocab.numericalize(caption)
-#         caption_vec += [self.vocab.stoi["<EOS>"]]
-        
-#         return img, torch.tensor(caption_vec)
-    
-    
-# #defing the transform to be applied
-# transforms = T.Compose([
-#     T.Resize((224,224)),
-#     T.ToTensor()
-# ])
-
-# def show_image(inp, title=None):
-#     """Imshow for Tensor."""
-#     inp = inp.numpy().transpose((1, 2, 0))
-#     plt.imshow(inp)
-#     if title is not None:
-#         plt.title(title)
-#     plt.pause(0.001)  # pause a bit so that plots are updated
-    
-    
-# #testing the dataset class
-# dataset =  FlickrDataset(
-#     root_dir = data_location+"/Images",
-#     captions_file = data_location+"/captions.txt",
-#     transform=transforms
-# )
-
-
-
-# img, caps = dataset[0]
-# show_image(img,"Image")
-# print("Token:",caps)
-# print("Sentence:")
-# print([dataset.vocab.itos[token] for token in caps.tolist()])
-
-# class CapsCollate:
-#     """
-#     Collate to apply the padding to the captions with dataloader
-#     """
-#     def __init__(self,pad_idx,batch_first=False):
-#         self.pad_idx = pad_idx
-#         self.batch_first = batch_first
-    
-#     def __call__(self,batch):
-#         imgs = [item[0].unsqueeze(0) for item in batch]
-#         imgs = torch.cat(imgs,dim=0)
-        
-#         targets = [item[1] for item in batch]
-#         targets = pad_sequence(targets, batch_first=self.batch_first, padding_value=self.pad_idx)
-#         return imgs,targets
-    
-
-# #writing the dataloader
-# #setting the constants
-# BATCH_SIZE = 4
-# NUM_WORKER = 1
-
-# #token to represent the padding
-# pad_idx = dataset.vocab.stoi["<PAD>"]
-
-# data_loader = DataLoader(
-#     dataset=dataset,
-#     batch_size=BATCH_SIZE,
-#     num_workers=NUM_WORKER,
-#     shuffle=True,
-#     collate_fn=CapsCollate(pad_idx=pad_idx,batch_first=True)
-# )
-
-
-# #generating the iterator from the dataloader
-# dataiter = iter(data_loader)
-
-# #getting the next batch
-# batch = next(dataiter)
-
-# #unpacking the batch
-# images, captions = batch
-
-# #showing info of image in single batch
-# for i in range(BATCH_SIZE):
-#     img,cap = images[i],captions[i]
-#     caption_label = [dataset.vocab.itos[token] for token in cap.tolist()]
-#     eos_index = caption_label.index('<EOS>')
-#     caption_label = caption_label[1:eos_index]
-#     caption_label = ' '.join(caption_label)                      
-#     show_image(img,caption_label)
-#     plt.show()
-
-#####################################################################################

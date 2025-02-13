@@ -1,4 +1,5 @@
 # train.py
+from dotenv import load_dotenv
 import os
 import torch
 import torch.nn as nn
@@ -6,6 +7,8 @@ import torch.optim as optim
 from torchvision import transforms
 from data_loader import Flickr8KDataset
 from model import ImageCaptioningModel
+
+load_dotenv()
 
 # Image preprocessing transformation (move here)
 transform = transforms.Compose([
@@ -16,10 +19,10 @@ transform = transforms.Compose([
 
 # Parameters
 # Update paths to match your dataset location
-image_dir = "/wsu/home/hh/hh27/hh2781/ondemand/Image-Captioning-With-Attention/flickr8k/Images/"
+image_dir = os.getenv("IMAGE_DIR")
 image_files = os.listdir(image_dir)
 print(f"Image files: {image_files[:5]}")  # Print the first 5 images in the directory
-caption_file = "/wsu/home/hh/hh27/hh2781/ondemand/Image-Captioning-With-Attention/flickr8k/captions.txt"
+caption_file = os.getenv("CAPTION_FILE")
 
 batch_size = 8  # Reduced from 32 to 8
 num_epochs = 10
