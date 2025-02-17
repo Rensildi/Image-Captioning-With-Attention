@@ -2,8 +2,9 @@
 import os
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from nltk.tokenize import word_tokenize
 from collections import Counter
@@ -88,3 +89,4 @@ class Flickr8KDataset(Dataset):
         )
 
         return img, torch.tensor(caption_indices), len(caption_indices)
+

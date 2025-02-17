@@ -23,8 +23,8 @@ transform = transforms.Compose([
 # Parameters
 image_dir = os.getenv("IMAGE_DIR")
 caption_file = os.getenv("CAPTION_FILE")
-batch_size = 8
-num_epochs = 10
+batch_size = 16
+num_epochs = 1
 learning_rate = 0.001
 
 dataset = Flickr8KDataset(image_dir=image_dir, caption_file=caption_file, transform=transform)
@@ -62,6 +62,38 @@ for epoch in range(num_epochs):
 
     avg_loss = total_loss / len(dataloader)
     print(f"Epoch {epoch + 1}, Average Loss: {avg_loss}")
+    
+# Function to plot training and test loss
+def plot_losses(train_losses, test_losses):
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(test_losses, label='Test Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Test Loss Over Epochs')
+    plt.legend()
+    plt.show()
+    
+# Function to display test set examples
+def display_test_examples(test_loader, model, device):
+    model.eval()
+    test_iter = iter(test_loader)
+    images, captions, _ = next(test_iter)
+    images = images.to(device)
+
+    with torch.no_grad():
+        outputs = model(images, captions)
+        predicted_captions = torch.argmax(outputs, dim=-1)
+
+    for i in range(len(images)):
+        image = images[i].cpu().permute(1, 2, 0).numpy()
+        ground_truth = ' '.join([word for idx in captions[i].cpu().numpy() if idx in model.vocab])
+        predicted = ' '.join([word for idx in predicted_captions[i].cpu().numpy() if idx in model.vocab])
+        
+        print(f"Ground Truth: {ground_truth}")
+        print(f"Predicted: {predicted}")
+        plt.imshow(image)
+        plt.show()
 
 print("Training complete.")
 
